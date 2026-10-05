@@ -39,7 +39,7 @@ class LetterGoNoGo extends Game {
       },
       number_of_trials: {
         type: "integer",
-        default: 200,
+        default: 5,
         description: "How many trials to run.",
       },
       show_fps: {
