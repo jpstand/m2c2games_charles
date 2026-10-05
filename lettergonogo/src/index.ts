@@ -11,7 +11,10 @@ import {
   ActivityType,
 } from "@m2c2kit/core";
 import { Session, } from "@m2c2kit/session";
-import { Button, CountdownScene, Instructions } from "@m2c2kit/addons";
+import { Button, CountdownScene} from "@m2c2kit/addons";
+
+//make sure to switch to lettergonogo folder to run (i.e., npm run serve) cd lettergonogo
+// when you finish just do ctrl + c :)
 
 class LetterGoNoGo extends Game {
   constructor() {
@@ -39,7 +42,7 @@ class LetterGoNoGo extends Game {
       },
       number_of_trials: {
         type: "integer",
-        default: 5,
+        default: 4,
         description: "How many trials to run.",
       },
       show_fps: {
@@ -92,6 +95,7 @@ class LetterGoNoGo extends Game {
       id: "lettergonogo",
       publishUuid: "",
       version: "1.0.0",
+      bodyBackgroundColor: WebColors.Black,
       shortDescription:
         "A Letter Go-No Go game.",
       longDescription: `Letter Go-No Go Activity is a cognitive task that measures response \
@@ -159,10 +163,6 @@ impulses and maintain focus under time constraints.`,
      */
     const goLetters: Letter[] = [
       { name: "V", isnogo: false },
-      { name: "Z", isnogo: false },
-      { name: "Y", isnogo: false },
-      { name: "K", isnogo: false },
-      { name: "W", isnogo: false },
     ];
 
     /**
@@ -208,20 +208,36 @@ impulses and maintain focus under time constraints.`,
      * ************************************************************************
      * Scenes: instructions.
      */
-    const instructionsScenes = Instructions.create({
-      instructionScenes: [
-        {
-          title: "Letter Go-No Go",
-          text: `If you are using a mobile device, tap on the blue circle with the letter inside with your finger if the letter is NOT X. Otherwise, do not tap.\n
-If you are using a computer device, click on the blue circle with the letter inside with your mouse if the letter is NOT X. Otherwise, do not click.`,
-          textFontSize: 20,
-          titleFontSize: 30,
-          nextButtonText: "START",
-          nextButtonBackgroundColor: WebColors.Green,
-        },
-      ],
+      const instructionsScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(instructionsScene);
+
+    const instructionsTitle = new Label({
+      text: "INSERT TASK NAME WHEN WE DECIDE ON IT :D \n\n this is at line 215 currently",
+      fontSize: 30,
+      fontColor: WebColors.White,
+      position: { x: 200, y: 200 },
     });
-    game.addScenes(instructionsScenes);
+    instructionsScene.addChild(instructionsTitle);
+
+    const instructionsText = new Label({
+      text: "A white square will appear in the middle of the screen.\n\nTap the white square as quickly as you can.",
+      fontSize: 20,
+      fontColor: WebColors.White,
+      position: { x: 200, y: 380 },
+    });
+    instructionsScene.addChild(instructionsText);
+
+    const startButton = new Button({
+      text: "START",
+      backgroundColor: WebColors.Green,
+      position: { x: 200, y: 650 },
+      isUserInteractionEnabled: true,
+    });
+    startButton.onTapDown(() => {
+      startButton.isUserInteractionEnabled = false; // prevent double taps
+      game.presentScene(countdownScene);
+    });
+    instructionsScene.addChild(startButton);
 
     /**
      * ************************************************************************
@@ -231,6 +247,7 @@ If you are using a computer device, click on the blue circle with the letter ins
       milliseconds: game.getParameter<number>("countdown_duration_ms"),
       // suppress the default countdown text
       text: "",
+      backgroundColor: WebColors.Black,
     });
     game.addScene(countdownScene);
 
@@ -240,12 +257,13 @@ If you are using a computer device, click on the blue circle with the letter ins
      * Scene: preparation. Show get ready message, then advance after
      * preparation_duration_ms milliseconds
      */
-    const preparationScene = new Scene();
+    const preparationScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(preparationScene);
 
     const getReadyMessage = new Label({
       text: "Get Ready",
       fontSize: 24,
+      fontColor: WebColors.White,
       position: { x: 200, y: 400 },
     });
     preparationScene.addChild(getReadyMessage);
@@ -279,7 +297,7 @@ If you are using a computer device, click on the blue circle with the letter ins
      * ************************************************************************
      * Scene: presentation. Present the word and get user selection
      */    
-    const presentationScene = new Scene();
+    const presentationScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(presentationScene);
 
     presentationScene.onAppear(() => {
@@ -290,13 +308,23 @@ If you are using a computer device, click on the blue circle with the letter ins
   const idx = game.trialIndex;
   const trialConfiguration = trialConfigurations[idx];
 
-  // Create the circular button (centered at x=200, y=400)
+  // // Create the circular button (centered at x=200, y=400)
+  // const button = new Button({
+  //   text: trialConfiguration.presented_letter,
+  //   size: { width: 100, height: 100 },
+  //   cornerRadius: 50,
+  //   fontColor: WebColors.White,
+  //   backgroundColor: WebColors.Red,
+  //   position: { x: 200, y: 400 },
+  //   isUserInteractionEnabled: true,
+  // }); above is original button (i.e., circle)
+
+  // White square target (no letter)
   const button = new Button({
-    text: trialConfiguration.presented_letter,
+    text: "",                          // no letter
     size: { width: 100, height: 100 },
-    cornerRadius: 50,
-    fontColor: WebColors.White,
-    backgroundColor: WebColors.Blue,
+    cornerRadius: 0,                   // 0 = sharp corners (square); 50 made it a circle
+    backgroundColor: WebColors.White,
     position: { x: 200, y: 400 },
     isUserInteractionEnabled: true,
   });
@@ -383,11 +411,12 @@ If you are using a computer device, click on the blue circle with the letter ins
      * ************************************************************************
      * Scene: done. Show done message, with a button to exit.
      */       
-    const doneScene = new Scene();
+    const doneScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(doneScene);
 
     const doneSceneText = new Label({
-      text: "You have completed all the Letter Go-No Go trials",
+      text: "You have completed all the INSERT NAME HERE WHEN RELEVANT trials \n\n this is at line 418",
+      fontColor: WebColors.White,
       position: { x: 200, y: 400 },
     });
     doneScene.addChild(doneSceneText);
