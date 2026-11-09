@@ -15459,136 +15459,6 @@ M2c2KitHelpers.registerM2NodeClass(
   VirtualKeyboard
 );
 
-const SCENE_TRANSITION_EASING = Easings.sinusoidalInOut;
-const SCENE_TRANSITION_DURATION_MS = 500;
-class CountdownScene extends Scene {
-  /**
-   * A scene that counts down from a specified number to zero, then transitions to the next scene.
-   *
-   * @param options - {@link CountdownSceneOptions}
-   */
-  constructor(options) {
-    super(options);
-    if (options?.transitionDurationMilliseconds !== void 0 && options?.transition) {
-      throw new M2Error(
-        "Both transition and transitionDurationMilliseconds options were provided. Only one should be provided. If using a custom transition, then the duration of that transition must be specified within the custom transition."
-      );
-    }
-    let timerShape;
-    if (options?.timerShape?.circle === void 0 && options?.timerShape?.rectangle === void 0 || options?.timerShape.circle !== void 0) {
-      timerShape = new Shape({
-        circleOfRadius: options?.timerShape?.circle?.radius ?? 100,
-        layout: {
-          constraints: {
-            topToTopOf: this,
-            bottomToBottomOf: this,
-            startToStartOf: this,
-            endToEndOf: this,
-            verticalBias: options?.shapeVerticalBias ?? 0.5
-          }
-        },
-        fillColor: options?.timerShape?.fillColor ?? WebColors.RoyalBlue
-      });
-      this.addChild(timerShape);
-    } else if (options?.timerShape.rectangle !== void 0) {
-      timerShape = new Shape({
-        rect: {
-          width: options?.timerShape?.rectangle?.width ?? 200,
-          height: options?.timerShape?.rectangle?.height ?? 200
-        },
-        cornerRadius: options?.timerShape?.rectangle?.cornerRadius,
-        layout: {
-          constraints: {
-            topToTopOf: this,
-            bottomToBottomOf: this,
-            startToStartOf: this,
-            endToEndOf: this,
-            verticalBias: options.shapeVerticalBias ?? 0.5
-          }
-        },
-        fillColor: options?.timerShape?.fillColor ?? WebColors.RoyalBlue
-      });
-      this.addChild(timerShape);
-    } else {
-      throw new M2Error("Invalid timer shape options.");
-    }
-    const timerInitialNumber = Math.floor(options.milliseconds / 1e3);
-    const timerNumberLabel = new Label({
-      // Number text will be set in onSetup()
-      text: "",
-      fontSize: options?.timerNumbersFontSize ?? 50,
-      fontName: options?.timerNumbersFontName,
-      fontColor: options?.timerNumbersFontColor ?? WebColors.White
-    });
-    timerShape.addChild(timerNumberLabel);
-    const textLabel = new Label({
-      text: options?.text ?? "GET READY",
-      fontSize: options?.textFontSize ?? 50,
-      fontName: options?.textFontName,
-      fontColor: options?.textFontColor,
-      layout: {
-        marginTop: options?.textMarginTop ?? 32,
-        constraints: {
-          topToBottomOf: timerShape,
-          startToStartOf: this,
-          endToEndOf: this
-        }
-      }
-    });
-    this.addChild(textLabel);
-    const countdownSequence = new Array();
-    for (let i = timerInitialNumber - 1; i > 0; i--) {
-      countdownSequence.push(Action.wait({ duration: 1e3 }));
-      countdownSequence.push(
-        Action.custom({
-          callback: () => {
-            timerNumberLabel.text = i.toString();
-          }
-        })
-      );
-    }
-    countdownSequence.push(Action.wait({ duration: 1e3 }));
-    countdownSequence.push(
-      Action.custom({
-        callback: () => {
-          timerNumberLabel.text = options?.zeroString ?? "0";
-        }
-      })
-    );
-    if (options?.zeroDwellMilliseconds !== void 0) {
-      countdownSequence.push(
-        Action.wait({ duration: options.zeroDwellMilliseconds })
-      );
-    }
-    countdownSequence.push(
-      Action.custom({
-        callback: () => {
-          const game = this.game;
-          const isLastScene = game.scenes.indexOf(this) === game.scenes.length - 1;
-          if (isLastScene) {
-            game.end();
-          }
-          const nextScene = game.scenes[game.scenes.indexOf(this) + 1];
-          game.presentScene(
-            nextScene,
-            options?.transition ?? Transition.slide({
-              direction: TransitionDirection.Left,
-              duration: options?.transitionDurationMilliseconds ?? SCENE_TRANSITION_DURATION_MS,
-              easing: SCENE_TRANSITION_EASING
-            })
-          );
-        }
-      })
-    );
-    this.onSetup(() => {
-      timerNumberLabel.text = timerInitialNumber.toString();
-    });
-    this.onAppear(() => {
-      this.run(Action.sequence(countdownSequence));
-    });
-  }
-}
-
 class CountdownTimer extends Composite {
   /**
    * A countdown timer displays a number that counts down to zero.
@@ -16065,13 +15935,28 @@ class MidGoNoGo extends Game {
       countdown_duration_ms: {
         default: 3e3,
         type: "number",
-        description: "Duration of the countdown before the first trial, milliseconds."
+        description: "Duration of the 3-2-1 countdown before practice, the main task, and each run (ms)."
       },
       trials_per_type: {
-        default: 2,
-        //adjust accordingly
+        default: 25,
         type: "integer",
-        description: "Trials of EACH of the 6 trial types. 5 = 30 trials (one run in the paper); 25 = 150 trials (all five runs)."
+        description: "Main-task trials of EACH of the 6 trial types, across all runs. 25 = 150 trials (paper). Use e.g. ?trials_per_type=2 for testing."
+      },
+      trials_per_type_per_run: {
+        default: 5,
+        type: "integer",
+        description: "Trials of each type within one run. 5 = 30-trial runs (paper). If trials_per_type is not a multiple of this, the last run is shorter."
+      },
+      practice_trials_per_type: {
+        default: 1,
+        type: "integer",
+        description: "Practice trials of each of the 6 types before the main task (not counted). 0 = no practice."
+      },
+      run_breaks: {
+        default: false,
+        //false for us because we are not doing multiple scans like original paper did
+        type: "boolean",
+        description: "Show a break screen between runs."
       },
       cue_min_ms: { default: 2e3, type: "number", description: "Shortest cue duration (ms)." },
       cue_max_ms: { default: 8e3, type: "number", description: "Longest cue duration (ms)." },
@@ -16120,7 +16005,13 @@ class MidGoNoGo extends Game {
       show_fps: { default: false, type: "boolean", description: "Should the FPS be shown?" }
     };
     const trialSchema = {
-      trial_index: { type: "integer", description: "Index of the trial, 0-based." },
+      block: { type: "string", description: "'practice' or 'main'." },
+      run: { type: "integer", description: "Run number, 1-based; 0 for practice." },
+      trial_in_run: { type: "integer", description: "0-based position within the run (or within practice)." },
+      trial_index: {
+        type: "integer",
+        description: "0-based index within the block (practice and main are counted separately)."
+      },
       condition: { type: "string", description: "'reward' (green cue) or 'neutral' (blue cue)." },
       trial_type: { type: "string", description: "'MID' (square), 'MID-Go' (circle + target), or 'MID-NoGo' (circle + NoGo signal)." },
       cue_shape: { type: "string", description: "'square' or 'circle'." },
@@ -16142,7 +16033,10 @@ class MidGoNoGo extends Game {
       premature_taps: { type: "integer", description: "Taps during the cue, before the stimulus appeared." },
       late_tap: { type: "boolean", description: "Did the participant tap during feedback, after the window closed?" },
       amount_cents: { type: "integer", description: "Money won (+) or lost (-) on this trial, in cents." },
-      total_cents: { type: "integer", description: "Running total after this trial, in cents." }
+      total_cents: {
+        type: "integer",
+        description: "Running total after this trial, in cents (practice and main totals are separate)."
+      }
     };
     const options = {
       name: "MID-Go/NoGo",
@@ -16150,7 +16044,7 @@ class MidGoNoGo extends Game {
       // and your project's assets folder is named lettergonogo.
       id: "lettergonogo",
       publishUuid: "",
-      version: "2.0.0",
+      version: "2.1.0",
       bodyBackgroundColor: WebColors.Black,
       shortDescription: "Monetary incentive delay Go/NoGo task.",
       longDescription: "Cues signal whether money can be won (green) or not (blue). Squares are always followed by a target; circles are followed by a target or a NoGo signal. Tap targets quickly; do not tap NoGo signals.",
@@ -16171,44 +16065,73 @@ class MidGoNoGo extends Game {
   async initialize() {
     await super.initialize();
     const game = this;
-    const p = (name) => game.getParameter(name);
-    const trialsPerType = p("trials_per_type");
-    const targetStep = p("target_step_ms");
-    const targetMin = p("target_min_ms");
-    const targetMax = p("target_max_ms");
-    const targetPlusFeedback = p("target_plus_feedback_ms");
-    const nogoWindow = p("nogo_window_ms");
-    const nogoFeedback = p("nogo_feedback_ms");
-    const hitReward = p("hit_reward_cents");
-    const nogoSuccessReward = p("nogo_success_cents");
-    const nogoErrorLoss = p("nogo_error_cents");
-    const sampleCue = makeJitterSampler(p("cue_min_ms"), p("cue_max_ms"), p("cue_mean_ms"));
-    const sampleFixation = makeJitterSampler(
-      p("fixation_min_ms"),
-      p("fixation_max_ms"),
-      p("fixation_mean_ms")
-    );
-    const trialConfigurations = [];
+    const num = (name) => Number(game.getParameter(name));
+    const bool = (name) => {
+      const value = game.getParameter(name);
+      return value === true || value === "true";
+    };
+    const trialsPerType = Math.max(0, Math.floor(num("trials_per_type")));
+    const perRunPerType = Math.max(1, Math.floor(num("trials_per_type_per_run")));
+    const practicePerType = Math.max(0, Math.floor(num("practice_trials_per_type")));
+    const runBreaks = bool("run_breaks");
+    const initialTargetMs = num("target_initial_ms");
+    const targetStep = num("target_step_ms");
+    const targetMin = num("target_min_ms");
+    const targetMax = num("target_max_ms");
+    const targetPlusFeedback = num("target_plus_feedback_ms");
+    const nogoWindow = num("nogo_window_ms");
+    const nogoFeedback = num("nogo_feedback_ms");
+    const hitReward = num("hit_reward_cents");
+    const nogoSuccessReward = num("nogo_success_cents");
+    const nogoErrorLoss = num("nogo_error_cents");
+    const sampleCue = makeJitterSampler(num("cue_min_ms"), num("cue_max_ms"), num("cue_mean_ms"));
+    const sampleFixation = makeJitterSampler(num("fixation_min_ms"), num("fixation_max_ms"), num("fixation_mean_ms"));
+    const center = { x: 200, y: 400 };
     const conditions = ["reward", "neutral"];
     const trialTypes = ["MID", "MID-Go", "MID-NoGo"];
-    for (const condition of conditions) {
-      for (const trialType of trialTypes) {
-        for (let i = 0; i < trialsPerType; i++) {
-          trialConfigurations.push({
-            condition,
-            trialType,
-            cueShape: trialType === "MID" ? "square" : "circle",
-            stimulus: trialType === "MID-NoGo" ? "nogo" : "target",
-            fixationBeforeMs: sampleFixation(),
-            cueDurationMs: sampleCue()
-          });
+    const buildBlock = (n, block, run) => {
+      const trials = [];
+      for (const condition of conditions) {
+        for (const trialType of trialTypes) {
+          for (let i = 0; i < n; i++) {
+            trials.push({
+              block,
+              run,
+              trialInRun: 0,
+              // set after shuffling
+              blockIndex: 0,
+              // set below
+              condition,
+              trialType,
+              cueShape: trialType === "MID" ? "square" : "circle",
+              stimulus: trialType === "MID-NoGo" ? "nogo" : "target",
+              fixationBeforeMs: sampleFixation(),
+              cueDurationMs: sampleCue()
+            });
+          }
         }
       }
+      shuffle(trials);
+      trials.forEach((t, i) => t.trialInRun = i);
+      return trials;
+    };
+    const practiceTrials = practicePerType > 0 ? buildBlock(practicePerType, "practice", 0) : [];
+    const mainTrials = [];
+    let remaining = trialsPerType;
+    let totalRuns = 0;
+    while (remaining > 0) {
+      const n = Math.min(perRunPerType, remaining);
+      totalRuns++;
+      mainTrials.push(...buildBlock(n, "main", totalRuns));
+      remaining -= n;
     }
-    shuffle(trialConfigurations);
+    practiceTrials.forEach((t, i) => t.blockIndex = i);
+    mainTrials.forEach((t, i) => t.blockIndex = i);
+    const trialConfigurations = [...practiceTrials, ...mainTrials];
     const totalTrials = trialConfigurations.length;
-    let targetWindowMs = p("target_initial_ms");
+    let targetWindowMs = initialTargetMs;
     let totalCents = 0;
+    let transitionShownFor = -1;
     const instructionsScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(instructionsScene);
     instructionsScene.addChild(
@@ -16218,9 +16141,10 @@ class MidGoNoGo extends Game {
         fontSize: 30,
         fontColor: WebColors.White,
         preferredMaxLayoutWidth: 340,
-        position: { x: 200, y: 110 }
+        position: { x: 200, y: 100 }
       })
     );
+    const hasPractice = practiceTrials.length > 0;
     instructionsScene.addChild(
       new Label({
         text: `GREEN shapes mean you can win money. BLUE shapes mean no money is at stake.
@@ -16229,50 +16153,90 @@ After a SQUARE, a star will always appear. Tap the screen (or press the spacebar
 
 After a CIRCLE, either a star or an X will appear. Tap for the star. Do NOT tap for the X.
 
-On green trials: a fast tap on a star wins ${formatCents(hitReward)}. Not tapping an X wins ${formatCents(nogoSuccessReward)}, but tapping an X loses ${formatCents(nogoErrorLoss)}.`,
+On green trials: a fast tap on a star wins ${formatCents(hitReward)}. Not tapping an X wins ${formatCents(nogoSuccessReward)}, but tapping an X loses ${formatCents(nogoErrorLoss)}.` + (hasPractice ? "\n\nYou will start with a few practice trials. Practice money does not count." : ""),
         fontSize: 17,
         fontColor: WebColors.White,
         preferredMaxLayoutWidth: 350,
-        position: { x: 200, y: 400 }
+        position: { x: 200, y: 390 }
       })
     );
     const startButton = new Button({
-      text: "START",
+      text: hasPractice ? "START PRACTICE" : "START",
+      size: { width: 250, height: 50 },
       backgroundColor: WebColors.Green,
-      position: { x: 200, y: 700 },
+      position: { x: 200, y: 710 },
       isUserInteractionEnabled: true
     });
     startButton.onTapDown(() => {
       startButton.isUserInteractionEnabled = false;
-      game.presentScene(countdownScene);
+      game.presentScene(getReadyScene);
     });
     instructionsScene.addChild(startButton);
-    const countdownScene = new CountdownScene({
-      milliseconds: p("countdown_duration_ms"),
-      text: "",
-      backgroundColor: WebColors.Black
+    const getReadyScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(getReadyScene);
+    const countdownSteps = 3;
+    const getReadyLabel = new Label({
+      text: String(countdownSteps),
+      fontSize: 60,
+      fontColor: WebColors.White,
+      position: center
     });
-    game.addScene(countdownScene);
+    getReadyScene.addChild(getReadyLabel);
+    getReadyScene.onAppear(() => {
+      const stepMs = num("countdown_duration_ms") / countdownSteps;
+      const actions = [];
+      for (let n = countdownSteps; n >= 1; n--) {
+        actions.push(
+          Action.custom({
+            callback: () => {
+              getReadyLabel.text = String(n);
+            }
+          })
+        );
+        actions.push(Action.wait({ duration: stepMs }));
+      }
+      actions.push(
+        Action.custom({
+          callback: () => {
+            getReadyLabel.text = String(countdownSteps);
+            game.presentScene(fixationScene);
+          }
+        })
+      );
+      getReadyScene.run(Action.sequence(actions));
+    });
     const fixationScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(fixationScene);
-    fixationScene.addChild(
-      new Label({ text: "+", fontSize: 60, fontColor: WebColors.White, position: { x: 200, y: 400 } })
-    );
+    fixationScene.addChild(new Label({ text: "+", fontSize: 60, fontColor: WebColors.White, position: center }));
     fixationScene.onAppear(() => {
-      if (game.trialIndex >= totalTrials) {
+      const idx = game.trialIndex;
+      if (idx >= totalTrials) {
         game.presentScene(doneScene);
         return;
       }
+      const trial = trialConfigurations[idx];
+      const previous = idx > 0 ? trialConfigurations[idx - 1] : void 0;
+      if (previous && transitionShownFor !== idx) {
+        if (previous.block === "practice" && trial.block === "main") {
+          transitionShownFor = idx;
+          game.presentScene(practiceDoneScene);
+          return;
+        }
+        if (runBreaks && trial.block === "main" && trial.run !== previous.run) {
+          transitionShownFor = idx;
+          game.presentScene(runBreakScene);
+          return;
+        }
+      }
       fixationScene.run(
         Action.sequence([
-          Action.wait({ duration: trialConfigurations[game.trialIndex].fixationBeforeMs }),
+          Action.wait({ duration: trial.fixationBeforeMs }),
           Action.custom({ callback: () => game.presentScene(trialScene) })
         ])
       );
     });
     const trialScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(trialScene);
-    const center = { x: 200, y: 400 };
     const cueSquare = new Shape({
       rect: { size: { width: 140, height: 140 } },
       fillColor: REWARD_COLOR,
@@ -16379,6 +16343,7 @@ On green trials: a fast tap on a star wins ${formatCents(hitReward)}. Not tappin
     trialScene.onAppear(() => {
       const idx = game.trialIndex;
       const trial = trialConfigurations[idx];
+      const isPractice = trial.block === "practice";
       const isTarget = trial.stimulus === "target";
       const windowMs = isTarget ? targetWindowMs : nogoWindow;
       const feedbackMs = isTarget ? targetPlusFeedback - windowMs : nogoFeedback;
@@ -16425,7 +16390,7 @@ On green trials: a fast tap on a star wins ${formatCents(hitReward)}. Not tappin
         totalCents += amountCents;
         feedbackOutcome.text = outcomeText;
         feedbackAmount.text = isReward ? formatCents(amountCents, true) : "No money this trial";
-        feedbackTotal.text = `Total: ${formatCents(totalCents)}`;
+        feedbackTotal.text = `${isPractice ? "Practice total" : "Total"}: ${formatCents(totalCents)}`;
         feedbackOutcome.hidden = false;
         feedbackAmount.hidden = false;
         feedbackTotal.hidden = false;
@@ -16433,7 +16398,10 @@ On green trials: a fast tap on a star wins ${formatCents(hitReward)}. Not tappin
       const finishTrial = () => {
         phase = "idle";
         hideAll();
-        game.addTrialData("trial_index", idx);
+        game.addTrialData("block", trial.block);
+        game.addTrialData("run", trial.run);
+        game.addTrialData("trial_in_run", trial.trialInRun);
+        game.addTrialData("trial_index", trial.blockIndex);
         game.addTrialData("condition", trial.condition);
         game.addTrialData("trial_type", trial.trialType);
         game.addTrialData("cue_shape", trial.cueShape);
@@ -16464,6 +16432,70 @@ On green trials: a fast tap on a star wins ${formatCents(hitReward)}. Not tappin
         ]),
         "trial"
       );
+    });
+    const practiceDoneScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(practiceDoneScene);
+    const practiceDoneText = new Label({
+      text: "",
+      fontSize: 20,
+      fontColor: WebColors.White,
+      preferredMaxLayoutWidth: 340,
+      position: { x: 200, y: 360 }
+    });
+    practiceDoneScene.addChild(practiceDoneText);
+    const mainStartButton = new Button({
+      text: "START",
+      backgroundColor: WebColors.Green,
+      position: { x: 200, y: 650 },
+      isUserInteractionEnabled: true
+    });
+    mainStartButton.onTapDown(() => {
+      mainStartButton.isUserInteractionEnabled = false;
+      targetWindowMs = initialTargetMs;
+      totalCents = 0;
+      game.presentScene(getReadyScene);
+    });
+    practiceDoneScene.addChild(mainStartButton);
+    practiceDoneScene.onAppear(() => {
+      const runsText = runBreaks && totalRuns > 1 ? ` It has ${totalRuns} parts, with a short break after each part.` : "";
+      practiceDoneText.text = `Practice complete.
+
+Your practice winnings (${formatCents(totalCents)}) do not count.
+
+Now the real task begins. Your total starts at $0.00.${runsText}
+
+Tap START when you are ready.`;
+      mainStartButton.isUserInteractionEnabled = true;
+    });
+    const runBreakScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(runBreakScene);
+    const runBreakText = new Label({
+      text: "",
+      fontSize: 22,
+      fontColor: WebColors.White,
+      preferredMaxLayoutWidth: 340,
+      position: { x: 200, y: 360 }
+    });
+    runBreakScene.addChild(runBreakText);
+    const continueButton = new Button({
+      text: "CONTINUE",
+      backgroundColor: WebColors.Green,
+      position: { x: 200, y: 650 },
+      isUserInteractionEnabled: true
+    });
+    continueButton.onTapDown(() => {
+      continueButton.isUserInteractionEnabled = false;
+      game.presentScene(getReadyScene);
+    });
+    runBreakScene.addChild(continueButton);
+    runBreakScene.onAppear(() => {
+      const finishedRun = trialConfigurations[game.trialIndex - 1].run;
+      runBreakText.text = `End of part ${finishedRun} of ${totalRuns}.
+
+Total so far: ${formatCents(totalCents)}
+
+Take a short break. Tap CONTINUE when you are ready.`;
+      continueButton.isUserInteractionEnabled = true;
     });
     const doneScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(doneScene);
@@ -16507,13 +16539,17 @@ activity.setParameters(gameParameters);
 const session = new Session({ activities: [activity] });
 session.onActivityData((ev) => {
   const trials = ev.data.trials;
+  if (!trials) return;
   const config = ev.activityConfiguration;
   const totalTrialsNeeded = 6 * Number(config.trials_per_type);
-  if (trials && trials.length === totalTrialsNeeded) {
-    const correctCount = trials.filter((t) => t.correct === true).length;
-    const accuracy = correctCount / trials.length * 100;
-    const simplifiedTrials = trials.map((t) => ({
-      trial: t.trial_index,
+  const practiceTrials = trials.filter((t) => t.block === "practice");
+  const mainTrials = trials.filter((t) => t.block === "main");
+  if (totalTrialsNeeded > 0 && mainTrials.length === totalTrialsNeeded) {
+    const correctCount = mainTrials.filter((t) => t.correct === true).length;
+    const accuracy = correctCount / mainTrials.length * 100;
+    const simplify = (t, label) => ({
+      trial: label,
+      run: t.run,
       condition: t.condition,
       type: t.trial_type,
       outcome: t.outcome,
@@ -16521,13 +16557,19 @@ session.onActivityData((ev) => {
       rt: t.response_time_ms === null ? null : Math.round(t.response_time_ms),
       window: t.response_window_ms,
       amount: t.amount_cents
-    }));
+    });
+    const simplifiedTrials = [
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...practiceTrials.map((t) => simplify(t, `p${t.trial_index + 1}`)),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...mainTrials.map((t) => simplify(t, t.trial_index))
+    ];
     if (window.parent) {
       window.parent.postMessage(
         {
           type: MESSAGE_DATA,
           acc: accuracy.toFixed(2),
-          total_cents: trials[trials.length - 1].total_cents,
+          total_cents: mainTrials[mainTrials.length - 1].total_cents,
           details: JSON.stringify(simplifiedTrials)
         },
         "*"

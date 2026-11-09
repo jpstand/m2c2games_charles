@@ -12,13 +12,22 @@ import {
   RgbaColor,
 } from "@m2c2kit/core";
 import { Session } from "@m2c2kit/session";
-import { Button, CountdownScene } from "@m2c2kit/addons";
+import { Button } from "@m2c2kit/addons";
 
 // make sure to switch to lettergonogo folder to run (i.e., npm run serve) cd lettergonogo
 // when you finish just do ctrl + c :)
 
 /*
  * MID-Go/NoGo task, adapted from the Letter Go/No-Go m2c2kit task.
+ *
+ * Session structure:
+ *   instructions
+ *   -> practice: practice_trials_per_type (1) of each of the 6 trial types, shuffled.
+ *      Practice money and the practice staircase do not carry over.
+ *   -> main task in runs: each run has trials_per_type_per_run (5) of each type,
+ *      shuffled within the run. trials_per_type (25) of each type in total
+ *      = 5 runs of 30 trials (150 trials), as in the paper.
+ *   -> break screen between runs (run_breaks)
  *
  * One trial:
  *   fixation "+" (2-8 s, mean 5.2 s)
@@ -28,7 +37,7 @@ import { Button, CountdownScene } from "@m2c2kit/addons";
  *        NoGo signal (X in a circle): 600 ms window; tap = NoGo error
  *   -> feedback: target trials 2000 ms minus the window; NoGo trials 1400 ms
  *
- * Trial types (equal numbers of each, shuffled):
+ * Trial types (equal numbers of each within every run):
  *   MID       = square cue -> always a target
  *   MID-Go    = circle cue -> target
  *   MID-NoGo  = circle cue -> NoGo signal
@@ -36,7 +45,8 @@ import { Button, CountdownScene } from "@m2c2kit/addons";
  *
  * Money (reward trials only): hit +20c, miss 0, NoGo success +20c, NoGo error -40c.
  * Adaptive window: starts at 400 ms; -50 ms after a hit, +50 ms after a miss
- * (target trials only, reward and neutral share one staircase).
+ * (target trials only, reward and neutral share one staircase). The staircase
+ * is reset to the starting value when the main task begins and carries across runs.
  */
 
 // ---------------------------------------------------------------------------
@@ -46,9 +56,14 @@ import { Button, CountdownScene } from "@m2c2kit/addons";
 type Condition = "reward" | "neutral";
 type TrialType = "MID" | "MID-Go" | "MID-NoGo";
 type Outcome = "hit" | "miss" | "nogo_success" | "nogo_error";
+type Block = "practice" | "main";
 
 /** Everything decided about a trial before the task starts. */
 interface TrialConfiguration {
+  block: Block;
+  run: number; // 0 for practice, 1..N for the main task
+  trialInRun: number; // 0-based position within its run (or within practice)
+  blockIndex: number; // 0-based position within its block (practice or main)
   condition: Condition;
   trialType: TrialType;
   cueShape: "square" | "circle";
@@ -158,13 +173,29 @@ class MidGoNoGo extends Game {
       countdown_duration_ms: {
         default: 3000,
         type: "number",
-        description: "Duration of the countdown before the first trial, milliseconds.",
+        description: "Duration of the 3-2-1 countdown before practice, the main task, and each run (ms).",
       },
       trials_per_type: {
-        default: 2, //adjust accordingly
+        default: 25,
         type: "integer",
         description:
-          "Trials of EACH of the 6 trial types. 5 = 30 trials (one run in the paper); 25 = 150 trials (all five runs).",
+          "Main-task trials of EACH of the 6 trial types, across all runs. 25 = 150 trials (paper). Use e.g. ?trials_per_type=2 for testing.",
+      },
+      trials_per_type_per_run: {
+        default: 5,
+        type: "integer",
+        description:
+          "Trials of each type within one run. 5 = 30-trial runs (paper). If trials_per_type is not a multiple of this, the last run is shorter.",
+      },
+      practice_trials_per_type: {
+        default: 1,
+        type: "integer",
+        description: "Practice trials of each of the 6 types before the main task (not counted). 0 = no practice.",
+      },
+      run_breaks: {
+        default: false, //false for us because we are not doing multiple scans like original paper did
+        type: "boolean",
+        description: "Show a break screen between runs.",
       },
       cue_min_ms: { default: 2000, type: "number", description: "Shortest cue duration (ms)." },
       cue_max_ms: { default: 8000, type: "number", description: "Longest cue duration (ms)." },
@@ -214,7 +245,13 @@ class MidGoNoGo extends Game {
     };
 
     const trialSchema: TrialSchema = {
-      trial_index: { type: "integer", description: "Index of the trial, 0-based." },
+      block: { type: "string", description: "'practice' or 'main'." },
+      run: { type: "integer", description: "Run number, 1-based; 0 for practice." },
+      trial_in_run: { type: "integer", description: "0-based position within the run (or within practice)." },
+      trial_index: {
+        type: "integer",
+        description: "0-based index within the block (practice and main are counted separately).",
+      },
       condition: { type: "string", description: "'reward' (green cue) or 'neutral' (blue cue)." },
       trial_type: { type: "string", description: "'MID' (square), 'MID-Go' (circle + target), or 'MID-NoGo' (circle + NoGo signal)." },
       cue_shape: { type: "string", description: "'square' or 'circle'." },
@@ -236,7 +273,10 @@ class MidGoNoGo extends Game {
       premature_taps: { type: "integer", description: "Taps during the cue, before the stimulus appeared." },
       late_tap: { type: "boolean", description: "Did the participant tap during feedback, after the window closed?" },
       amount_cents: { type: "integer", description: "Money won (+) or lost (-) on this trial, in cents." },
-      total_cents: { type: "integer", description: "Running total after this trial, in cents." },
+      total_cents: {
+        type: "integer",
+        description: "Running total after this trial, in cents (practice and main totals are separate).",
+      },
     };
 
     const options: GameOptions = {
@@ -245,7 +285,7 @@ class MidGoNoGo extends Game {
       // and your project's assets folder is named lettergonogo.
       id: "lettergonogo",
       publishUuid: "",
-      version: "2.0.0",
+      version: "2.1.0",
       bodyBackgroundColor: WebColors.Black,
       shortDescription: "Monetary incentive delay Go/NoGo task.",
       longDescription:
@@ -272,53 +312,92 @@ class MidGoNoGo extends Game {
     const game = this;
 
     // -----------------------------------------------------------------------
-    // Read parameters once
+    // Read parameters once. URL parameters can arrive as strings, so convert
+    // explicitly (e.g. "400" + 50 would otherwise give "40050").
     // -----------------------------------------------------------------------
-    const p = <T>(name: string) => game.getParameter<T>(name);
-    const trialsPerType = p<number>("trials_per_type");
-    const targetStep = p<number>("target_step_ms");
-    const targetMin = p<number>("target_min_ms");
-    const targetMax = p<number>("target_max_ms");
-    const targetPlusFeedback = p<number>("target_plus_feedback_ms");
-    const nogoWindow = p<number>("nogo_window_ms");
-    const nogoFeedback = p<number>("nogo_feedback_ms");
-    const hitReward = p<number>("hit_reward_cents");
-    const nogoSuccessReward = p<number>("nogo_success_cents");
-    const nogoErrorLoss = p<number>("nogo_error_cents");
+    const num = (name: string) => Number(game.getParameter<number>(name));
+    const bool = (name: string) => {
+      const value = game.getParameter<boolean | string>(name);
+      return value === true || value === "true";
+    };
 
-    const sampleCue = makeJitterSampler(p<number>("cue_min_ms"), p<number>("cue_max_ms"), p<number>("cue_mean_ms"));
-    const sampleFixation = makeJitterSampler(
-      p<number>("fixation_min_ms"),
-      p<number>("fixation_max_ms"),
-      p<number>("fixation_mean_ms"),
-    );
+    const trialsPerType = Math.max(0, Math.floor(num("trials_per_type")));
+    const perRunPerType = Math.max(1, Math.floor(num("trials_per_type_per_run")));
+    const practicePerType = Math.max(0, Math.floor(num("practice_trials_per_type")));
+    const runBreaks = bool("run_breaks");
+    const initialTargetMs = num("target_initial_ms");
+    const targetStep = num("target_step_ms");
+    const targetMin = num("target_min_ms");
+    const targetMax = num("target_max_ms");
+    const targetPlusFeedback = num("target_plus_feedback_ms");
+    const nogoWindow = num("nogo_window_ms");
+    const nogoFeedback = num("nogo_feedback_ms");
+    const hitReward = num("hit_reward_cents");
+    const nogoSuccessReward = num("nogo_success_cents");
+    const nogoErrorLoss = num("nogo_error_cents");
+
+    const sampleCue = makeJitterSampler(num("cue_min_ms"), num("cue_max_ms"), num("cue_mean_ms"));
+    const sampleFixation = makeJitterSampler(num("fixation_min_ms"), num("fixation_max_ms"), num("fixation_mean_ms"));
+
+    const center = { x: 200, y: 400 };
 
     // -----------------------------------------------------------------------
-    // Build and shuffle the trial list
+    // Build the trial list: practice block, then main runs.
+    // Each block is balanced (n of each of the 6 types) and shuffled on its own.
     // -----------------------------------------------------------------------
-    const trialConfigurations: TrialConfiguration[] = [];
     const conditions: Condition[] = ["reward", "neutral"];
     const trialTypes: TrialType[] = ["MID", "MID-Go", "MID-NoGo"];
-    for (const condition of conditions) {
-      for (const trialType of trialTypes) {
-        for (let i = 0; i < trialsPerType; i++) {
-          trialConfigurations.push({
-            condition,
-            trialType,
-            cueShape: trialType === "MID" ? "square" : "circle",
-            stimulus: trialType === "MID-NoGo" ? "nogo" : "target",
-            fixationBeforeMs: sampleFixation(),
-            cueDurationMs: sampleCue(),
-          });
+
+    const buildBlock = (n: number, block: Block, run: number): TrialConfiguration[] => {
+      const trials: TrialConfiguration[] = [];
+      for (const condition of conditions) {
+        for (const trialType of trialTypes) {
+          for (let i = 0; i < n; i++) {
+            trials.push({
+              block,
+              run,
+              trialInRun: 0, // set after shuffling
+              blockIndex: 0, // set below
+              condition,
+              trialType,
+              cueShape: trialType === "MID" ? "square" : "circle",
+              stimulus: trialType === "MID-NoGo" ? "nogo" : "target",
+              fixationBeforeMs: sampleFixation(),
+              cueDurationMs: sampleCue(),
+            });
+          }
         }
       }
+      shuffle(trials);
+      trials.forEach((t, i) => (t.trialInRun = i));
+      return trials;
+    };
+
+    const practiceTrials = practicePerType > 0 ? buildBlock(practicePerType, "practice", 0) : [];
+
+    // Split the main task into runs of perRunPerType of each type.
+    // trials_per_type=25, per run=5 -> 5 runs of 30. trials_per_type=2 -> 1 run of 12.
+    const mainTrials: TrialConfiguration[] = [];
+    let remaining = trialsPerType;
+    let totalRuns = 0;
+    while (remaining > 0) {
+      const n = Math.min(perRunPerType, remaining);
+      totalRuns++;
+      mainTrials.push(...buildBlock(n, "main", totalRuns));
+      remaining -= n;
     }
-    shuffle(trialConfigurations);
+
+    practiceTrials.forEach((t, i) => (t.blockIndex = i));
+    mainTrials.forEach((t, i) => (t.blockIndex = i));
+    const trialConfigurations: TrialConfiguration[] = [...practiceTrials, ...mainTrials];
     const totalTrials = trialConfigurations.length;
 
     // State that persists across trials
-    let targetWindowMs = p<number>("target_initial_ms"); // the adaptive staircase
+    let targetWindowMs = initialTargetMs; // the adaptive staircase
     let totalCents = 0;
+    // Index of the trial whose transition screen (practice done / run break)
+    // has already been shown, so the fixation scene doesn't loop back to it.
+    let transitionShownFor = -1;
 
     // -----------------------------------------------------------------------
     // Scene: instructions
@@ -332,10 +411,11 @@ class MidGoNoGo extends Game {
         fontSize: 30,
         fontColor: WebColors.White,
         preferredMaxLayoutWidth: 340,
-        position: { x: 200, y: 110 },
+        position: { x: 200, y: 100 },
       }),
     );
 
+    const hasPractice = practiceTrials.length > 0;
     instructionsScene.addChild(
       new Label({
         text:
@@ -343,53 +423,100 @@ class MidGoNoGo extends Game {
           "After a SQUARE, a star will always appear. Tap the screen (or press the spacebar) as fast as you can when you see the star.\n\n" +
           "After a CIRCLE, either a star or an X will appear. Tap for the star. Do NOT tap for the X.\n\n" +
           `On green trials: a fast tap on a star wins ${formatCents(hitReward)}. ` +
-          `Not tapping an X wins ${formatCents(nogoSuccessReward)}, but tapping an X loses ${formatCents(nogoErrorLoss)}.`,
+          `Not tapping an X wins ${formatCents(nogoSuccessReward)}, but tapping an X loses ${formatCents(nogoErrorLoss)}.` +
+          (hasPractice ? "\n\nYou will start with a few practice trials. Practice money does not count." : ""),
         fontSize: 17,
         fontColor: WebColors.White,
         preferredMaxLayoutWidth: 350,
-        position: { x: 200, y: 400 },
+        position: { x: 200, y: 390 },
       }),
     );
 
     const startButton = new Button({
-      text: "START",
+      text: hasPractice ? "START PRACTICE" : "START",
+      size: { width: 250, height: 50 },
       backgroundColor: WebColors.Green,
-      position: { x: 200, y: 700 },
+      position: { x: 200, y: 710 },
       isUserInteractionEnabled: true,
     });
     startButton.onTapDown(() => {
       startButton.isUserInteractionEnabled = false; // prevent double taps
-      game.presentScene(countdownScene);
+      game.presentScene(getReadyScene);
     });
     instructionsScene.addChild(startButton);
 
     // -----------------------------------------------------------------------
-    // Scene: countdown (moves on to the next added scene, fixation, by itself)
+    // Scene: 3-2-1 countdown, reused before practice, the main task, and each
+    // run. Always moves on to the fixation scene.
     // -----------------------------------------------------------------------
-    const countdownScene = new CountdownScene({
-      milliseconds: p<number>("countdown_duration_ms"),
-      text: "",
-      backgroundColor: WebColors.Black,
+    const getReadyScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(getReadyScene);
+    const countdownSteps = 3;
+    const getReadyLabel = new Label({
+      text: String(countdownSteps),
+      fontSize: 60,
+      fontColor: WebColors.White,
+      position: center,
     });
-    game.addScene(countdownScene);
+    getReadyScene.addChild(getReadyLabel);
+
+    getReadyScene.onAppear(() => {
+      const stepMs = num("countdown_duration_ms") / countdownSteps;
+      const actions: Action[] = [];
+      for (let n = countdownSteps; n >= 1; n--) {
+        actions.push(
+          Action.custom({
+            callback: () => {
+              getReadyLabel.text = String(n);
+            },
+          }),
+        );
+        actions.push(Action.wait({ duration: stepMs }));
+      }
+      actions.push(
+        Action.custom({
+          callback: () => {
+            getReadyLabel.text = String(countdownSteps); // ready for next time
+            game.presentScene(fixationScene);
+          },
+        }),
+      );
+      getReadyScene.run(Action.sequence(actions));
+    });
 
     // -----------------------------------------------------------------------
-    // Scene: fixation (replaces the old "Get Ready" preparation scene)
+    // Scene: fixation. Also decides when to show the practice-done screen,
+    // a run break, or the done screen.
     // -----------------------------------------------------------------------
     const fixationScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(fixationScene);
-    fixationScene.addChild(
-      new Label({ text: "+", fontSize: 60, fontColor: WebColors.White, position: { x: 200, y: 400 } }),
-    );
+    fixationScene.addChild(new Label({ text: "+", fontSize: 60, fontColor: WebColors.White, position: center }));
 
     fixationScene.onAppear(() => {
-      if (game.trialIndex >= totalTrials) {
+      const idx = game.trialIndex;
+      if (idx >= totalTrials) {
         game.presentScene(doneScene);
         return;
       }
+
+      const trial = trialConfigurations[idx];
+      const previous = idx > 0 ? trialConfigurations[idx - 1] : undefined;
+      if (previous && transitionShownFor !== idx) {
+        if (previous.block === "practice" && trial.block === "main") {
+          transitionShownFor = idx;
+          game.presentScene(practiceDoneScene);
+          return;
+        }
+        if (runBreaks && trial.block === "main" && trial.run !== previous.run) {
+          transitionShownFor = idx;
+          game.presentScene(runBreakScene);
+          return;
+        }
+      }
+
       fixationScene.run(
         Action.sequence([
-          Action.wait({ duration: trialConfigurations[game.trialIndex].fixationBeforeMs }),
+          Action.wait({ duration: trial.fixationBeforeMs }),
           Action.custom({ callback: () => game.presentScene(trialScene) }),
         ]),
       );
@@ -401,7 +528,6 @@ class MidGoNoGo extends Game {
     // -----------------------------------------------------------------------
     const trialScene = new Scene({ backgroundColor: WebColors.Black });
     game.addScene(trialScene);
-    const center = { x: 200, y: 400 };
 
     const cueSquare = new Shape({
       rect: { size: { width: 140, height: 140 } },
@@ -527,6 +653,7 @@ class MidGoNoGo extends Game {
     trialScene.onAppear(() => {
       const idx = game.trialIndex;
       const trial = trialConfigurations[idx];
+      const isPractice = trial.block === "practice";
       const isTarget = trial.stimulus === "target";
       const windowMs = isTarget ? targetWindowMs : nogoWindow;
       const feedbackMs = isTarget ? targetPlusFeedback - windowMs : nogoFeedback;
@@ -582,7 +709,7 @@ class MidGoNoGo extends Game {
 
         feedbackOutcome.text = outcomeText;
         feedbackAmount.text = isReward ? formatCents(amountCents, true) : "No money this trial";
-        feedbackTotal.text = `Total: ${formatCents(totalCents)}`;
+        feedbackTotal.text = `${isPractice ? "Practice total" : "Total"}: ${formatCents(totalCents)}`;
         feedbackOutcome.hidden = false;
         feedbackAmount.hidden = false;
         feedbackTotal.hidden = false;
@@ -592,7 +719,10 @@ class MidGoNoGo extends Game {
         phase = "idle";
         hideAll();
 
-        game.addTrialData("trial_index", idx);
+        game.addTrialData("block", trial.block);
+        game.addTrialData("run", trial.run);
+        game.addTrialData("trial_in_run", trial.trialInRun);
+        game.addTrialData("trial_index", trial.blockIndex);
         game.addTrialData("condition", trial.condition);
         game.addTrialData("trial_type", trial.trialType);
         game.addTrialData("cue_shape", trial.cueShape);
@@ -611,7 +741,7 @@ class MidGoNoGo extends Game {
         game.addTrialData("total_cents", totalCents);
         game.trialComplete();
 
-        // fixationScene checks whether all trials are done
+        // fixationScene decides what comes next (trial, break, or done)
         game.presentScene(fixationScene);
       };
 
@@ -628,6 +758,82 @@ class MidGoNoGo extends Game {
         ]),
         "trial",
       );
+    });
+
+    // -----------------------------------------------------------------------
+    // Scene: practice done -> resets money and staircase, starts main task
+    // -----------------------------------------------------------------------
+    const practiceDoneScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(practiceDoneScene);
+
+    const practiceDoneText = new Label({
+      text: "",
+      fontSize: 20,
+      fontColor: WebColors.White,
+      preferredMaxLayoutWidth: 340,
+      position: { x: 200, y: 360 },
+    });
+    practiceDoneScene.addChild(practiceDoneText);
+
+    const mainStartButton = new Button({
+      text: "START",
+      backgroundColor: WebColors.Green,
+      position: { x: 200, y: 650 },
+      isUserInteractionEnabled: true,
+    });
+    mainStartButton.onTapDown(() => {
+      mainStartButton.isUserInteractionEnabled = false;
+      targetWindowMs = initialTargetMs; // main task starts at 400 ms, as in the paper
+      totalCents = 0;
+      game.presentScene(getReadyScene);
+    });
+    practiceDoneScene.addChild(mainStartButton);
+
+    practiceDoneScene.onAppear(() => {
+      const runsText =
+        runBreaks && totalRuns > 1 ? ` It has ${totalRuns} parts, with a short break after each part.` : "";
+      practiceDoneText.text =
+        "Practice complete.\n\n" +
+        `Your practice winnings (${formatCents(totalCents)}) do not count.\n\n` +
+        `Now the real task begins. Your total starts at $0.00.${runsText}\n\n` +
+        "Tap START when you are ready.";
+      mainStartButton.isUserInteractionEnabled = true;
+    });
+
+    // -----------------------------------------------------------------------
+    // Scene: break between runs
+    // -----------------------------------------------------------------------
+    const runBreakScene = new Scene({ backgroundColor: WebColors.Black });
+    game.addScene(runBreakScene);
+
+    const runBreakText = new Label({
+      text: "",
+      fontSize: 22,
+      fontColor: WebColors.White,
+      preferredMaxLayoutWidth: 340,
+      position: { x: 200, y: 360 },
+    });
+    runBreakScene.addChild(runBreakText);
+
+    const continueButton = new Button({
+      text: "CONTINUE",
+      backgroundColor: WebColors.Green,
+      position: { x: 200, y: 650 },
+      isUserInteractionEnabled: true,
+    });
+    continueButton.onTapDown(() => {
+      continueButton.isUserInteractionEnabled = false;
+      game.presentScene(getReadyScene);
+    });
+    runBreakScene.addChild(continueButton);
+
+    runBreakScene.onAppear(() => {
+      const finishedRun = trialConfigurations[game.trialIndex - 1].run;
+      runBreakText.text =
+        `End of part ${finishedRun} of ${totalRuns}.\n\n` +
+        `Total so far: ${formatCents(totalCents)}\n\n` +
+        "Take a short break. Tap CONTINUE when you are ready.";
+      continueButton.isUserInteractionEnabled = true;
     });
 
     // -----------------------------------------------------------------------
@@ -681,17 +887,27 @@ const session = new Session({ activities: [activity] });
 session.onActivityData((ev) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const trials = (ev.data as any).trials;
+  if (!trials) return;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const config = ev.activityConfiguration as any;
   const totalTrialsNeeded = 6 * Number(config.trials_per_type);
 
-  if (trials && trials.length === totalTrialsNeeded) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const practiceTrials = trials.filter((t: any) => t.block === "practice");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mainTrials = trials.filter((t: any) => t.block === "main");
+
+  if (totalTrialsNeeded > 0 && mainTrials.length === totalTrialsNeeded) {
+    // Accuracy and total are from the main task only.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const correctCount = trials.filter((t: any) => t.correct === true).length;
-    const accuracy = (correctCount / trials.length) * 100;
+    const correctCount = mainTrials.filter((t: any) => t.correct === true).length;
+    const accuracy = (correctCount / mainTrials.length) * 100;
+
+    // One row per trial. Practice rows come first, labelled p1, p2, ...
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const simplifiedTrials = trials.map((t: any) => ({
-      trial: t.trial_index,
+    const simplify = (t: any, label: string | number) => ({
+      trial: label,
+      run: t.run,
       condition: t.condition,
       type: t.trial_type,
       outcome: t.outcome,
@@ -699,14 +915,20 @@ session.onActivityData((ev) => {
       rt: t.response_time_ms === null ? null : Math.round(t.response_time_ms),
       window: t.response_window_ms,
       amount: t.amount_cents,
-    }));
+    });
+    const simplifiedTrials = [
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...practiceTrials.map((t: any) => simplify(t, `p${t.trial_index + 1}`)),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...mainTrials.map((t: any) => simplify(t, t.trial_index)),
+    ];
 
     if (window.parent) {
       window.parent.postMessage(
         {
           type: MESSAGE_DATA,
           acc: accuracy.toFixed(2),
-          total_cents: trials[trials.length - 1].total_cents,
+          total_cents: mainTrials[mainTrials.length - 1].total_cents,
           details: JSON.stringify(simplifiedTrials),
         },
         "*",
